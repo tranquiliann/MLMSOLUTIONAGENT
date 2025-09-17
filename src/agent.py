@@ -201,8 +201,8 @@ async def entrypoint(ctx: JobContext):
 
     # --- IMPORTANT: disable preemptive_generation for true pre-reply RAG ---
     session = AgentSession(
-        llm=openai.LLM(model="gpt-4o-mini"),
-        stt=openai.STT(model="gpt-4o-transcribe"),
+        llm=openai.LLM(model="gpt-4.1"),
+        stt=deepgram.STT(model="nova-3", language="multi"),
         tts=openai.TTS(voice="alloy"),
         turn_detection=MultilingualModel(),
         vad=ctx.proc.userdata["vad"],
