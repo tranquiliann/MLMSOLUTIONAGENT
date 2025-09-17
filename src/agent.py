@@ -1,5 +1,6 @@
 import logging
 import os
+import asyncio
 
 from dotenv import load_dotenv
 from livekit.agents import (
@@ -25,6 +26,73 @@ from .rag_client import retrieve_context  # <-- NEW: async HTTP call to your RAG
 logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
+
+def validate_environment() -> None:
+    """Validate required environment variables at startup."""
+    required_vars = {
+        "RAG_BASE_URL": "URL for RAG service connectivity",
+        "LIVEKIT_URL": "LiveKit server URL",
+        "LIVEKIT_API_KEY": "LiveKit API key for authentication",
+        "LIVEKIT_API_SECRET": "LiveKit API secret for authentication"
+    }
+
+    missing_vars = []
+    for var, description in required_vars.items():
+        value = os.getenv(var)
+        if not value or not value.strip():
+            missing_vars.append(f"{var} ({description})")
+
+    if missing_vars:
+        error_msg = "Missing required environment variables:\n" + "\n".join(f"  - {var}" for var in missing_vars)
+        logger.error(error_msg)
+        raise RuntimeError(f"Environment validation failed:\n{error_msg}")
+
+    # Log successful validation
+    logger.info("Environment validation passed - all required variables are set")
+
+# Validate environment on module import
+validate_environment()
+
+# Health check function for monitoring RAG connectivity
+async def health_check() -> dict:
+    """Perform health check for agent and RAG connectivity."""
+    health_status = {
+        "status": "healthy",
+        "checks": {
+            "environment": {"status": "healthy", "details": {}},
+            "rag": {"status": "unknown", "details": {}}
+        }
+    }
+
+    # Check environment variables
+    required_env_vars = ["RAG_BASE_URL", "LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"]
+    for var in required_env_vars:
+        value = os.getenv(var)
+        if value:
+            health_status["checks"]["environment"]["details"][var] = "set"
+        else:
+            health_status["checks"]["environment"]["details"][var] = "missing"
+            health_status["checks"]["environment"]["status"] = "unhealthy"
+            health_status["status"] = "unhealthy"
+
+    # Check RAG connectivity
+    try:
+        # Quick test with a simple question
+        rag_result = await retrieve_context("health check", "health_check")
+        if rag_result and "formattedContext" in rag_result:
+            health_status["checks"]["rag"]["status"] = "healthy"
+            health_status["checks"]["rag"]["details"]["response"] = "success"
+        else:
+            health_status["checks"]["rag"]["status"] = "unhealthy"
+            health_status["checks"]["rag"]["details"]["response"] = "no_context"
+            health_status["status"] = "unhealthy"
+    except Exception as e:
+        logger.error(f"RAG health check failed: {e}")
+        health_status["checks"]["rag"]["status"] = "unhealthy"
+        health_status["checks"]["rag"]["details"]["error"] = str(e)
+        health_status["status"] = "unhealthy"
+
+    return health_status
 
 
 class Assistant(Agent):
@@ -86,6 +154,39 @@ class Assistant(Agent):
         """
         logger.info(f"Looking up weather for {location}")
         return "sunny with a temperature of 70 degrees."
+
+    @function_tool
+    async def check_system_health(self, context: RunContext):
+        """Check the health status of the agent system including RAG connectivity and environment configuration.
+        Returns a comprehensive health report that can be used for monitoring and troubleshooting.
+        """
+        try:
+            health_result = await health_check()
+            status = health_result["status"]
+
+            if status == "healthy":
+                summary = "✅ System is healthy. All checks passed."
+            else:
+                summary = "⚠️ System has issues that need attention."
+
+            # Format detailed response
+            details = []
+            for check_name, check_data in health_result["checks"].items():
+                check_status = check_data["status"]
+                status_icon = "✅" if check_status == "healthy" else "❌"
+                details.append(f"{status_icon} {check_name}: {check_status}")
+
+                if check_data["details"]:
+                    for key, value in check_data["details"].items():
+                        details.append(f"  - {key}: {value}")
+
+            full_response = f"{summary}\n\n" + "\n".join(details)
+            logger.info(f"Health check completed: {status}")
+            return full_response
+
+        except Exception as e:
+            logger.error(f"Health check tool failed: {e}")
+            return f"❌ Health check failed: {str(e)}"
 
 
 def prewarm(proc: JobProcess):

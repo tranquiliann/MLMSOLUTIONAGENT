@@ -68,6 +68,33 @@ In production, use the `start` command:
 uv run python src/agent.py start
 ```
 
+## Container Execution Context
+
+**Important**: This agent uses `uv` for dependency management and virtual environment isolation. All Python execution must use `uv run` to ensure proper access to dependencies.
+
+### Why uv run is required
+
+The container uses uv-managed virtual environments rather than system-wide Python package installation. This provides:
+
+- **Dependency isolation**: Prevents conflicts between project dependencies and system packages
+- **Reproducible builds**: Locked dependency versions ensure consistent behavior across environments
+- **Security**: Non-root user execution in isolated environment
+
+### Execution contexts
+
+- ✅ **Correct**: `uv run python src/agent.py start`
+- ❌ **Incorrect**: `python src/agent.py start` (will fail with `ModuleNotFoundError`)
+
+### Health monitoring
+
+The agent includes built-in health checks for monitoring system status:
+
+- **Environment variables**: Validates required configuration
+- **RAG connectivity**: Tests connection to the RAG service
+- **Container health**: Docker HEALTHCHECK integration
+
+You can check system health by asking the agent: *"Check system health"* during a conversation.
+
 ## Frontend & Telephony
 
 Get started quickly with our pre-built frontend starter apps, or add telephony support:
