@@ -109,7 +109,7 @@ class Assistant(Agent):
     # We call our RAG HTTP endpoint, then inject context into the turn.
     async def on_user_turn_completed(self, turn_ctx, new_message):
         try:
-            text = new_message.text_content()
+            text = (getattr(new_message, "text_content", None) or getattr(new_message, "text", ""))
             if not text:
                 return
 
