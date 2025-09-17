@@ -1,0 +1,14 @@
+services:
+  mlm-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mlm-agent
+    env_file:
+      - .env.local
+    networks: [mlmnet]
+    restart: unless-stopped
+
+networks:
+  mlmnet:
+    external: true

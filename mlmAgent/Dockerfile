@@ -44,4 +44,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
   CMD uv run python -c "import asyncio, os; from dotenv import load_dotenv; from src.agent import health_check; load_dotenv('.env.local'); result = asyncio.run(health_check()); print(f'Health status: {result[\"status\"]}'); exit(0 if result['status'] == 'healthy' else 1)"
 
 # Start the worker
-CMD ["uv", "run", "src/agent.py", "start"]
+CMD ["uv","run","-m","src.agent","start"]
