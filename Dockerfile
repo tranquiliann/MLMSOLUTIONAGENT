@@ -3,7 +3,9 @@
 ARG PYTHON_VERSION=3.11
 FROM ghcr.io/astral-sh/uv:python${PYTHON_VERSION}-bookworm-slim AS base
 
-ENV PYTHONUNBUFFERED=1
+ENV PYTHONUNBUFFERED=1 \
+    HF_HOME=/app/.cache/huggingface \
+    HUGGINGFACE_HUB_CACHE=/app/.cache/huggingface
 
 ARG UID=10001
 RUN adduser \
@@ -32,6 +34,11 @@ RUN uv sync --locked && uv add aiohttp
 
 # Copy the rest of the source
 COPY . .
+
+# Pre-download multilingual turn detector assets while network access is available
+RUN uv run python scripts/download_turn_detector_assets.py
+
+ENV HF_HUB_OFFLINE=1
 
 RUN chown -R appuser:appuser /app
 USER appuser

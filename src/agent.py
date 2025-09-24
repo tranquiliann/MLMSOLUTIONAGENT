@@ -3,6 +3,7 @@ import os
 import asyncio
 
 from dotenv import load_dotenv
+from huggingface_hub import hf_hub_download
 from livekit.agents import (
     NOT_GIVEN,
     Agent,
@@ -19,6 +20,7 @@ from livekit.agents import (
 )
 from livekit.agents.llm import function_tool
 from livekit.plugins import cartesia, deepgram, noise_cancellation, openai, silero
+from livekit.plugins.turn_detector.models import HG_MODEL, MODEL_REVISIONS, ONNX_FILENAME
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 from .rag_client import retrieve_context  # RAC retrieval via your RAG service
@@ -51,6 +53,39 @@ def validate_environment() -> None:
 
 # Validate environment on module import
 validate_environment()
+
+
+def ensure_turn_detector_assets() -> None:
+    """Fail fast if multilingual VAD assets are missing."""
+    multilingual_revision = MODEL_REVISIONS["multilingual"]
+    required_assets = [
+        ("languages.json", {}),
+        ("tokenizer.json", {}),
+        ("tokenizer_config.json", {}),
+        ("special_tokens_map.json", {}),
+        ("vocab.json", {}),
+        ("merges.txt", {}),
+        (ONNX_FILENAME, {"subfolder": "onnx"}),
+    ]
+
+    for filename, kwargs in required_assets:
+        try:
+            hf_hub_download(
+                repo_id=HG_MODEL,
+                filename=filename,
+                revision=multilingual_revision,
+                local_files_only=True,
+                **kwargs,
+            )
+        except Exception as exc:  # pragma: no cover - fail fast in production
+            location = f"{kwargs['subfolder']}/{filename}" if "subfolder" in kwargs else filename
+            raise RuntimeError(
+                "Missing multilingual turn detector asset. "
+                f"Ensure {location} is pre-downloaded for revision {multilingual_revision}."
+            ) from exc
+
+
+ensure_turn_detector_assets()
 
 # Health check function for monitoring RAC connectivity
 async def health_check() -> dict:
@@ -93,16 +128,37 @@ async def health_check() -> dict:
 
 # --- BVNM / RAC strict policy injected every turn ---
 BVNM_RAC_POLICY = """\
-You are BVNM’s voice assistant.
+You are Fibi, BVNM’s friendly, motivating digital avatar.
 Your ONLY knowledge source is the RAC system provided below as “RAC SNIPPETS”.
 Hard rules (must follow):
 1) Use ONLY facts that appear explicitly in the RAC SNIPPETS. Do not infer, summarize beyond the text, or reach conclusions.
-2) If the RAC SNIPPETS do not contain an answer, say you don’t have that information in RAC and ask a brief, friendly follow-up (e.g., to refine the term).
-3) Do NOT use outside knowledge or prior memory.
-4) Keep replies short, friendly, and speak naturally. If appropriate, begin with the small filler “M,” once to sound human-like.
-5) No emojis or fancy formatting.
+2) If the RAC SNIPPETS do not contain an answer, say you don’t have that information in RAC and ask a brief, encouraging follow-up (e.g., to refine the term or share what they need).
+3) Do NOT use outside knowledge or prior memory. All explanations of the F3 Methode must be grounded in RAC SNIPPETS.
+4) Communicate in a warm, structured, and motivating tone. Keep replies concise, clear, and encouraging. Introduce yourself als Fibi nur einmal zu Beginn; erwähne deinen Namen danach nicht mehr. Eine natürliche Begrüßung (z. B. “Hallo, ich bin Fibi”) ist zu Beginn willkommen. Ein weicher Füller wie “M,” ist optional und sollte sparsam eingesetzt werden.
+5) Highlight simplicity, automation, and fairness only when the RAC SNIPPETS mention those points. Never overpromise or speculate.
+6) No emojis or fancy formatting.
+Reference Q&A (use only when the RAC SNIPPETS explicitly support the information):
+• Was ist die F3 Methode? – Ein einfaches 3-Schritte-System (Registrieren → Aktivieren → Teilen); der Funnel übernimmt automatisch die Erklärung.
+• Wie starte ich? – Kostenlos registrieren (Name & E-Mail), ein Aktivierungs-Bundle wählen, den persönlichen Link erhalten und teilen.
+• Was bedeutet aktivieren? – Ein Bundle kaufen (z. B. ab €97 einmalig + €17 monatlich), um Provisionen freizuschalten und den Referral-Link zu erhalten.
+• Wie verdiene ich Geld? – Provision bei jeder Bundle-Aktivierung über den eigenen Link (40–70 % auf die Setup-Gebühr, zusätzliche Team-Provisionen auf mehreren Ebenen).
+• Muss ich selbst etwas erklären? – Nein, der Funnel erklärt alles automatisch; Aufgabe ist das Teilen des Links.
+• Wie schnell sehe ich Ergebnisse? – Je konsequenter das Teilen, desto schneller können erste Provisionen entstehen (oft nach wenigen Tagen).
+• Vorteile der F3 Methode – Kein Technik-Wissen nötig, vollautomatisierter Funnel, einfacher Start ab €97, Provisionen bis 70 %, duplizierbares System.
+• Kann das wirklich jeder? – Ja, weil nur der Link geteilt wird; das System übernimmt Präsentation und Erklärung.
+• Provisionswerte (PW) – Advance 80 PW Aktivierung / 14 PW Lizenz, Pro 160 / 30, Elite 400 / 60, Ultimate 800 / 120. Provisionen basieren auf PW (z. B. Elite-Partner: 60 % auf 160 PW einmalig, 30 % auf 30 PW monatlich, solange die Lizenz aktiv bleibt).
+• Ablauf der F3 Methode – 1. Registrieren (schnell, unkompliziert). 2. Aktivieren (Bundle wählen, Tools & Vergütungssystem nutzen). 3. Teilen (persönlichen Link verbreiten; der Funnel arbeitet 24/7). Das System ist duplizierbar.
+• Leistungen – Automatisierter Funnel, Schritt-für-Schritt-Erklärungen, Social-Posting- und Reel-Vorlagen, Tools für Reichweite & Leads, KI-Unterstützung für Sprache und Texte.
+• Produkt-Bundles – Optimales Preis-Leistungs-Verhältnis; Bundles günstiger als Einzelkäufe.
+• Verdienstmöglichkeiten – Direktprovisionen bei Bundle-Aktivierungen plus langfristige Team-Provisionen; transparentes, faires Modell; sofort startklar ohne Technik-Wissen.
+• Hintergrund – F3 Methode vom BVNM/BVNMglobal getragen; BVNM steht für Qualität & Professionalität, BVNMglobal liefert digitale Lösungen wie F3, QUME, vizit.
+• Motivation zur Aktivierung – Bundles & Provisionen: Advance 40 %/25 %, Pro 50 %/25 %, Elite 60 %/30 %, Ultimate 70 %/35 %; jederzeitiges Upgrade durch Differenzzahlung; danach Profil personalisieren und Empfehlungsseite aktivieren.
+• Nutzung der Tools – Downloads (Broschüren), Social Posts (fertige Beiträge/Reels), Status auf „aktiv“ setzen, Link regelmäßig teilen.
+• Einschulung Teil 1 – Registrieren, Aktivieren, Teilen; Link teilen statt erklären, Funnel übernimmt die Präsentation.
+• Einschulung Teil 2 – Alltagstauglichkeit: Link konsequent über Messenger & Social Media teilen, Vorlagen nutzen, Regelmäßigkeit bringt Ergebnisse.
+• Einschulung Teil 3 – Duplikation: Partner führen dieselben Schritte aus; tägliches bzw. mehrmaliges Teilen stärkt Team-Wachstum und Einkommen.
 If RAC has no relevant snippets, your entire reply should be something like:
-“M, I don’t have that in RAC. Can you give me a different term or a bit more detail?”.
+“I don’t have that in RAC. Can you give me a different term or a bit more detail?”.
 """
 
 
@@ -110,8 +166,8 @@ class Assistant(Agent):
     def __init__(self) -> None:
         super().__init__(
             instructions=(
-                "You are BVNM’s RAC-only voice assistant. "
-                "You must follow the BVNM/RAC policy system messages in this conversation."
+                "You are Fibi, BVNM’s RAC-only digital coach for the F3 Methode. "
+                "Follow the BVNM/RAC policy system messages exactly for every turn."
             ),
         )
 
@@ -242,6 +298,15 @@ async def entrypoint(ctx: JobContext):
     )
 
     await ctx.connect()
+
+    session.generate_reply(
+        instructions=(
+            BVNM_RAC_POLICY
+            + "\n\nStarte das Gespräch jetzt mit einer freundlichen Begrüßung. Stelle dich genau einmal"
+              " als Fibi vor, erinnere kurz an die drei Schritte (Registrieren, Aktivieren, Teilen)"
+              " und frage anschließend, wobei du helfen kannst."
+        ),
+    )
 
 
 if __name__ == "__main__":

@@ -16,6 +16,7 @@ dependencies = [
     "livekit-plugins-openai>=1.2.9",
     "livekit-plugins-silero>=1.2.9",
     "livekit-plugins-turn-detector>=1.2.9",
+    "huggingface_hub>=0.23,<1.0",
     "python-dotenv",
 ]
 
@@ -23,6 +24,7 @@ dependencies = [
 dev = [
     "pytest",
     "pytest-asyncio",
+    "fakeredis",
     "ruff",
 ]
 
