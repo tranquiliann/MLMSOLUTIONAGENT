@@ -32,6 +32,13 @@ RUN mkdir -p src
 # If your lock already has aiohttp, the add is a no-op.
 RUN uv sync --locked && uv add aiohttp
 
+# Add local reranking stack (LlamaIndex core + FlagEmbedding reranker + torch)
+# Pin core to a stable 0.13.x to avoid API churn; adjust torch wheel for your CUDA if needed.
+RUN uv add "llama-index-core==0.13.5" \
+           "llama-index-postprocessor-flag-embedding-reranker>=0.1.2,<1.0" \
+           "FlagEmbedding>=1.2.0,<2.0" \
+           "torch>=2.2,<3.0"
+
 # Copy the rest of the source
 COPY . .
 
