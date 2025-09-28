@@ -1,4 +1,5 @@
 import os
+import time
 import logging
 import aiohttp
 import asyncio
@@ -47,45 +48,93 @@ async def _make_rag_request(url: str, payload: Dict[str, Any], attempt: int = 1)
         log.error(f"RAG unexpected error (attempt {attempt}): {e}")
         return None, True
 
-async def retrieve_context(question: str, session_id: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Call RAG service with retry logic and return {'formattedContext': str, 'items': [...]}.
-    Returns empty dict on all failures (agent falls back to default behavior).
-    """
-    if not question or not question.strip():
+async def rag_search(
+    question: str,
+    *,
+    session_id: Optional[str] = None,
+    top_k: Optional[int] = None,
+    base_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Call the RAG service /search endpoint and return its raw payload."""
+
+    question = (question or "").strip()
+    if not question:
         log.warning("Empty question provided to RAG, skipping request")
         return {}
 
-    url = f"{BASE_URL.rstrip('/')}/api/rag/search"
-    payload: Dict[str, Any] = {"question": question, "top_k": TOP_K}
+    search_url = f"{(base_url or BASE_URL).rstrip('/')}/api/rag/search"
+    payload: Dict[str, Any] = {"question": question, "top_k": top_k or TOP_K}
     if session_id:
-        payload["session_id"] = session_id  # <-- include for tracing/attribution on the backend
+        payload["session_id"] = session_id
 
-    log.info(f"RAG request: question='{question[:50]}...' session_id={session_id}")
+    log.info(
+        "RAG search request: question='%s' session_id=%s top_k=%s base_url=%s",
+        f"{question[:50]}..." if len(question) > 50 else question,
+        session_id,
+        payload["top_k"],
+        base_url or BASE_URL,
+        extra={
+            "event": "rag_http_start",
+            "session": session_id,
+            "top_k": payload["top_k"],
+        },
+    )
+
+    started = time.perf_counter()
 
     for attempt in range(1, MAX_RETRIES + 1):
-        result, retryable = await _make_rag_request(url, payload, attempt)
+        result, retryable = await _make_rag_request(search_url, payload, attempt)
 
         if result is not None:
-            # Validate response structure
-            if isinstance(result, dict) and ("formattedContext" in result or "items" in result):
-                formatted_context = result.get("formattedContext", "")
-                items = result.get("items", [])
-                log.info(f"RAG success: {len(items)} items, context length: {len(formatted_context)}")
-                return {"formattedContext": formatted_context, "items": items}
-            else:
-                log.warning(f"RAG returned invalid response structure: {result}")
-                return {}  # invalid payload: do not keep retrying the same bad shape
+            if isinstance(result, dict):
+                elapsed_ms = (time.perf_counter() - started) * 1000
+                log.info(
+                    "RAG search success: %d items, formattedContext=%s",
+                    len(result.get("items", []) or []),
+                    "yes" if result.get("formattedContext") else "no",
+                    extra={
+                        "event": "rag_http_complete",
+                        "session": session_id,
+                        "elapsed_ms": round(elapsed_ms, 2),
+                        "hits": len(result.get("items", []) or []),
+                    },
+                )
+                return result
 
-        # No result
+            log.warning("RAG returned non-dict payload: %s", result)
+            return {}
+
         if not retryable:
-            break  # e.g., 4xx client error—stop retrying immediately
+            break
 
         if attempt < MAX_RETRIES:
-            log.info(f"RAG attempt {attempt} failed, retrying in {RETRY_DELAY}s...")
+            log.info("RAG attempt %d failed, retrying in %.1fs", attempt, RETRY_DELAY)
             await asyncio.sleep(RETRY_DELAY)
         else:
-            log.error(f"RAG failed after {MAX_RETRIES} attempts")
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            log.error(
+                "RAG failed after %d attempts",
+                MAX_RETRIES,
+                extra={
+                    "event": "rag_http_failed",
+                    "session": session_id,
+                    "elapsed_ms": round(elapsed_ms, 2),
+                },
+            )
 
-    log.error("RAG service unavailable, agent will continue without context")
+    log.error("RAG service unavailable, returning empty result")
     return {}
+
+
+async def retrieve_context(question: str, session_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Backwards-compatible helper that returns {'formattedContext': str, 'items': [...]}.
+    """
+
+    result = await rag_search(question, session_id=session_id)
+    if not result:
+        return {}
+
+    formatted_context = result.get("formattedContext", "") if isinstance(result, dict) else ""
+    items = result.get("items", []) if isinstance(result, dict) else []
+    return {"formattedContext": formatted_context, "items": items}

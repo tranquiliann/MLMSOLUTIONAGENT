@@ -1,6 +1,12 @@
+import os
+
 import pytest
 from livekit.agents import AgentSession, llm, mock_tools
 from livekit.plugins import openai
+
+
+if os.getenv("OPENAI_API_KEY", "sk-test") in {"sk-test", ""}:
+    pytest.skip("OpenAI key not configured; skipping integration agent tests", allow_module_level=True)
 
 from agent import Assistant
 

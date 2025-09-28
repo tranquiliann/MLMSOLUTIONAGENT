@@ -18,7 +18,8 @@ dependencies = [
     "livekit-plugins-turn-detector>=1.2.9",
     "huggingface_hub>=0.23,<1.0",
     "python-dotenv",
-    "llama-index-core==0.13.5",
+    "llama-index-core>=0.13.0,<0.14",
+    "llama-index-llms-openai>=0.5.0,<0.6",
     "llama-index-postprocessor-flag-embedding-reranker>=0.1.2,<1.0",
     "FlagEmbedding>=1.2.0,<2.0",
     "torch>=2.2,<3.0",
@@ -29,6 +30,22 @@ dev = [
     "pytest",
     "pytest-asyncio",
     "fakeredis",
+    "pytest-mock",
+    "pytest-cov",
+    "respx",
+    "fastapi",
+    "ruff",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "fakeredis",
+    "pytest-mock",
+    "pytest-cov",
+    "respx",
+    "fastapi",
     "ruff",
 ]
 

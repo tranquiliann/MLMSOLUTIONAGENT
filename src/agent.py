@@ -1,6 +1,7 @@
 import logging
 import os
-import asyncio
+import time
+from typing import Optional
 
 from dotenv import load_dotenv
 from huggingface_hub import hf_hub_download
@@ -23,12 +24,13 @@ from livekit.plugins import cartesia, deepgram, noise_cancellation, openai, sile
 from livekit.plugins.turn_detector.models import HG_MODEL, MODEL_REVISIONS, ONNX_FILENAME
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
-from .rag_client import retrieve_context  # RAG retrieval via your RAG service
+from health_server import start_health_server, stop_health_server
+from rag_client import BASE_URL, retrieve_context  # RAG retrieval via your RAG service
+from rag_chat import RAGChatEngine
 
 #
 # LlamaIndex reranker (local, no external LLM calls)
 #
-from llama_index.core.schema import TextNode, NodeWithScore, QueryBundle  # type: ignore
 from llama_index.postprocessor.flag_embedding_reranker import FlagEmbeddingReranker  # type: ignore
 
 logger = logging.getLogger("agent")
@@ -65,6 +67,10 @@ validate_environment()
 
 def ensure_turn_detector_assets() -> None:
     """Fail fast if multilingual VAD assets are missing."""
+    if os.getenv("SKIP_TURN_DETECTOR_CHECK", "false").lower() in {"1", "true", "yes"}:
+        logger.warning("Skipping turn detector asset validation due to env override")
+        return
+
     multilingual_revision = MODEL_REVISIONS["multilingual"]
     required_assets = [
         ("languages.json", {}),
@@ -106,50 +112,22 @@ RERANK_TOP_N = int(os.getenv("RAG_RERANK_TOP_N", "6"))
 RERANK_CAP   = int(os.getenv("RAG_RERANK_CAP", "24"))   # candidates to re-rank (latency control)
 RERANK_FP16  = os.getenv("RAG_RERANK_FP16", "false").lower() == "true"  # set true if you run CUDA
 
-try:
-    _flag_reranker = FlagEmbeddingReranker(
-        model=RERANK_MODEL,
-        top_n=RERANK_TOP_N,
-        use_fp16=RERANK_FP16,
-    )
-    logger.info(
-        f"Loaded local reranker: {RERANK_MODEL} (top_n={RERANK_TOP_N}, cap={RERANK_CAP}, fp16={RERANK_FP16})"
-    )
-except Exception as e:
-    logger.warning(f"FlagEmbeddingReranker init failed; disabling rerank. Error: {e}")
+if os.getenv("DISABLE_RERANKER", "false").lower() in {"1", "true", "yes"}:
+    logger.warning("FlagEmbedding reranker disabled via env override")
     _flag_reranker = None
-
-def _rerank_items_with_bge(items: list, query: str) -> list:
-    """Reorder items locally using the BGE cross-encoder; keep your item shape."""
-    if not items or _flag_reranker is None:
-        return items
-    # Cap candidates to bound latency
-    candidates = items[:RERANK_CAP]
-
-    nodes = []
-    for it in candidates:
-        txt = (it.get("text") or it.get("content") or it.get("chunk") or "").strip()
-        if not txt:
-            continue
-        node = TextNode(text=txt, metadata=it.get("metadata", {}))
-        nodes.append(NodeWithScore(node=node, score=float(it.get("score", 0.0))))
-
-    if not nodes:
-        return items
-
-    out_nodes = _flag_reranker.postprocess_nodes(
-        nodes, query_bundle=QueryBundle(query_str=query)
-    )
-    # Map back to your item dict shape (text + score + metadata)
-    remapped = []
-    for n in out_nodes:
-        remapped.append({
-            "text": n.node.get_content(),
-            "score": float(n.score or 0.0),
-            "metadata": dict(n.node.metadata or {}),
-        })
-    return remapped
-
+else:
+    try:
+        _flag_reranker = FlagEmbeddingReranker(
+            model=RERANK_MODEL,
+            top_n=RERANK_TOP_N,
+            use_fp16=RERANK_FP16,
+        )
+        logger.info(
+            f"Loaded local reranker: {RERANK_MODEL} (top_n={RERANK_TOP_N}, cap={RERANK_CAP}, fp16={RERANK_FP16})"
+        )
+    except Exception as e:
+        logger.warning(f"FlagEmbeddingReranker init failed; disabling rerank. Error: {e}")
+        _flag_reranker = None
 
 # -----------------------------
 # Deutschsprachige System-Policy
@@ -158,14 +136,12 @@ BASE_POLICY = """
 Du bist Fibi, die freundliche digitale Coachin von BVNM für die F3-Methode erschaffen von lumea.AI
 
 # Nutzung von RAG
-- Falls im Chatverlauf VOR der Nutzeranfrage eine Assistenz-Nachricht mit
-  'RAG_CONTEXT_BEGIN' ... 'RAG_CONTEXT_END' vorhanden ist, nutze deren Inhalt
-  als sachliche Hintergrundinformation. Integriere relevante Fakten natürlich
-  in deine Antwort, ohne RAG, Snippets oder Mechanismen zu erwähnen.
-- Falls KEINE solche RAG-Assistenz-Nachricht vorhanden ist, antworte ganz normal
-  aus deinem allgemeinen Können heraus. 
-- Falls RAG-Kontext vorhanden, aber offenkundig themenfremd zur Nutzerabsicht ist,
-  ignoriere ihn und antworte normal.
+- Wenn du fachliche Informationen aus dem BVNM-Wissensarchiv brauchst, rufe das
+  Funktionstool `query_rag` mit einer klar formulierten Frage auf.
+- Verwende das Tool nicht für Smalltalk oder wenn du die Antwort bereits sicher
+  weißt.
+- Warte auf die Tool-Antwort und integriere die relevanten Fakten natürlich in
+  deine Antwort, ohne das Tool oder interne Mechanismen zu erwähnen.
 
 # Stil & Sprache
 - Antworte kurz, klar und hilfreich. Stelle höchstens eine Rückfrage zugleich.
@@ -178,10 +154,18 @@ Du bist Fibi, die freundliche digitale Coachin von BVNM für die F3-Methode ersc
 # -----------------------------
 # Health check function (RAG)
 # -----------------------------
+AGENT_SERVICE_NAME = os.getenv("AGENT_SERVICE_NAME", "mlmsolution-agent")
+AGENT_VERSION = os.getenv("AGENT_VERSION", "dev")
+HEALTH_HOST = os.getenv("AGENT_HEALTH_HOST", "0.0.0.0")
+HEALTH_PORT = int(os.getenv("AGENT_HEALTH_PORT", "8081"))
+
+
 async def health_check() -> dict:
     """Perform health check for agent and RAG connectivity."""
     health_status = {
         "status": "healthy",
+        "service": AGENT_SERVICE_NAME,
+        "version": AGENT_VERSION,
         "checks": {
             "environment": {"status": "healthy", "details": {}},
             "rag": {"status": "unknown", "details": {}},
@@ -210,6 +194,7 @@ async def health_check() -> dict:
             # Leer ist kein harter Fehler -> degraded
             health_status["checks"]["rag"]["status"] = "degraded"
             health_status["checks"]["rag"]["details"]["response"] = "empty"
+        health_status["checks"]["rag"]["details"]["base_url"] = os.getenv("RAG_BASE_URL", "")
     except Exception as e:
         logger.error(f"RAG health check failed: {e}")
         health_status["checks"]["rag"]["status"] = "unhealthy"
@@ -219,130 +204,72 @@ async def health_check() -> dict:
     return health_status
 
 
-def _rag_is_useful(rag: dict) -> bool:
-    """
-    Relevanzkriterium ohne hartkodierte Smalltalk-Listen:
-    - Nützlich, wenn mindestens ein Item existiert (optional mit brauchbarem Score),
-      ODER der formatierte Kontext substanzielle Länge hat (>= 200 Zeichen).
-    """
-    if not rag or not isinstance(rag, dict):
-        return False
-
-    items = rag.get("items") or []
-    if items:
-        try:
-            max_score = max(
-                float(i.get("score") or i.get("relevance") or i.get("similarity") or 0.0)
-                for i in items
-                if isinstance(i, dict)
-            )
-            if max_score >= 0.5:
-                return True
-        except Exception:
-            # Falls Scores fehlen/uneinheitlich sind, genügt die Existenz von Items.
-            return True
-        return True
-
-    ctx = (rag.get("formattedContext") or "").strip()
-    return len(ctx) >= 200
-
-
-async def _condense_question_with_budget(session_llm, question: str, history_text: str = "", ms_budget: int = 150) -> str:
-    """
-    Versucht, die Nutzerfrage binnen ms_budget zu einer eigenständigen Frage umzuformulieren.
-    Bei Timeout/Fehler wird die Originalfrage zurückgegeben (kein Latenzaufschlag über Budget).
-    """
-    question = (question or "").strip()
-    if not question:
-        return ""
-
-    sys_msg = (
-        "Du bist ein Umschreiber. Formuliere die Nutzerfrage so um, dass sie ohne Kontext eindeutig ist. "
-        "Übernimm relevante Entitäten/Orte/Zeiträume aus dem Verlauf. "
-        "Antworte NUR mit der umgeschriebenen Frage."
-    )
-    user_payload = f"Verlauf:\n{(history_text or '').strip()}\n\nFrage:\n{question}\n\nUmschreiben:"
-
-    async def _call():
-        resp = await session_llm.chat(messages=[
-            {"role": "system", "content": sys_msg},
-            {"role": "user", "content": user_payload},
-        ])
-        text = getattr(resp, "text", None) or getattr(resp, "message", None) or ""
-        return (text or question).strip()
-
-    try:
-        return await asyncio.wait_for(_call(), timeout=ms_budget / 1000.0)
-    except Exception:
-        return question
-
-
 class Assistant(Agent):
     def __init__(self) -> None:
         super().__init__(instructions=BASE_POLICY)
-        self._last_user_utterance: str = ""   # für Folgefragen-Umschreibung
+        rerankers = [_flag_reranker] if _flag_reranker is not None else None
+        retrieval_top_k = max(RERANK_CAP, RERANK_TOP_N)
+        self._rag_engine = RAGChatEngine(
+            top_k=retrieval_top_k,
+            base_url=BASE_URL,
+            rerankers=rerankers,
+        )
+        self._current_session_id: Optional[str] = None
 
-    # Läuft NACH der Nutzeräußerung und VOR der Modellantwort.
-    # RAG wird nur als assistant-Nachricht injiziert, wenn nützlich.
-    # Keine system-Nachrichten pro Turn.
-    async def on_user_turn_completed(self, turn_ctx, new_message):
+    def _get_session_id(self, context: RunContext) -> str:
+        session = getattr(context, "session", None) or getattr(self, "session", None)
+        room = getattr(session, "room", None)
+        if room and getattr(room, "name", None):
+            return room.name
+        return "unknown_session"
+
+    @function_tool
+    async def query_rag(self, context: RunContext, question: str) -> str:
+        """Fragt das Wissensarchiv nach zusätzlichen Fakten."""
+        session_id = self._get_session_id(context)
+        if session_id != self._current_session_id:
+            logger.debug("Starting new RAG conversation for session %s", session_id)
+            self._rag_engine.reset()
+            self._current_session_id = session_id
+
+        normalized_question = (question or "").strip()
+        if not normalized_question:
+            logger.info(
+                "RAG tool received empty question",
+                extra={
+                    "event": "rag_tool_empty",
+                    "session": session_id,
+                },
+            )
+            return "Ich habe dazu leider keine weiteren Informationen gefunden."
+
         try:
-            text = (getattr(new_message, "text_content", None) or getattr(new_message, "text", ""))
-            if not text:
-                return
-            text = text.strip()
-            if not text:
-                return
-
-            # Session-ID (Raumname bevorzugt) für Tracing
-            session_id = getattr(turn_ctx, "room", None)
-            if session_id and hasattr(session_id, "name"):
-                session_id = session_id.name
-            else:
-                session_id = "unknown_session"
-
-            # 1) kurze Historie (hier nur die letzte Nutzerfrage; bewusst minimal für Latenz)
-            history_text = self._last_user_utterance
-
-            # 2) zeitbudgetierte Umschreibung; bei Timeout/Fehler wird einfach `text` genutzt
-            llm = getattr(getattr(self, "session", None), "llm", None) or getattr(getattr(turn_ctx, "session", None), "llm", None)
-            condensed = await _condense_question_with_budget(llm or self.session.llm, text, history_text, ms_budget=150)
-
-            # 3) RAG mit der kondensierten (oder Original‑)Frage
-            rag = await retrieve_context(question=condensed, session_id=session_id)
-
-            # 4) letzte Nutzeräußerung für den nächsten Turn merken
-            self._last_user_utterance = text
-
-            # Nur injizieren, wenn nützlich
-            if _rag_is_useful(rag):
-                items = rag.get("items") or []
-                formatted = (rag.get("formattedContext") or "").strip()
-
-                # Wenn Items vorhanden sind, lokal mit BGE neu reihen und daraus Kontext bauen
-                if items:
-                    items = _rerank_items_with_bge(items, query=condensed)
-                    top_blocks = [i.get("text", "").strip() for i in items if i.get("text")]
-                    # Baue kompakten Kontext aus den Top-N; vermeide unnötig lange Injektion
-                    formatted_from_items = "\n\n".join(top_blocks[:RERANK_TOP_N]).strip()
-                    if formatted_from_items:
-                        formatted = formatted_from_items
-
-                # after building formatted_from_items
-                if not formatted and not formatted_from_items:
-                    return  # nothing meaningful to inject
-
-                if formatted:
-                    turn_ctx.add_message(
-                        role="assistant",
-                        content=f"RAG_CONTEXT_BEGIN\n{formatted}\nRAG_CONTEXT_END",
-                    )
-
-            # Wenn nicht nützlich: keine Injektion → Modell antwortet normal gemäß BASE_POLICY
-
-        except Exception as e:
-            logger.exception(f"pre-reply RAG injection failed (continuing without RAG): {e}")
-            # Fehler blockiert den Turn nicht; wir injizieren nichts.
+            logger.info(
+                "RAG tool invocation: session=%s question='%s'",
+                session_id,
+                normalized_question[:80],
+                extra={
+                    "event": "rag_tool_start",
+                    "session": session_id,
+                },
+            )
+            started = time.perf_counter()
+            answer = await self._rag_engine.aquery(normalized_question, session_id=session_id)
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            logger.info(
+                "RAG tool completed in %.1fms",
+                elapsed_ms,
+                extra={
+                    "event": "rag_tool_complete",
+                    "session": session_id,
+                    "elapsed_ms": round(elapsed_ms, 2),
+                    "answer_empty": not bool(answer and answer.strip()),
+                },
+            )
+            return answer or "Ich habe dazu leider keine weiteren Informationen gefunden."
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error("RAG tool failed: %s", exc, exc_info=True)
+            return "Entschuldigung, ich konnte dazu gerade keine Wissensbasis finden."
 
     # System-Health-Tool (intern); nie für Nutzerwissen
     @function_tool
@@ -384,13 +311,40 @@ async def entrypoint(ctx: JobContext):
         "room": ctx.room.name,
     }
 
+    health_server = None
+    try:
+        health_server = await start_health_server(
+            status_provider=health_check,
+            host=HEALTH_HOST,
+            port=HEALTH_PORT,
+        )
+        if health_server is not None:
+            logger.info(
+                "Health endpoint listening on %s:%s",
+                HEALTH_HOST,
+                HEALTH_PORT,
+                extra={"event": "health_server_started"},
+            )
+        else:
+            logger.warning(
+                "Health endpoint disabled (bind failed)",
+                extra={"event": "health_server_unavailable"},
+            )
+    except Exception as exc:  # pragma: no cover - startup guard
+        logger.error(
+            "Failed to start health endpoint: %s",
+            exc,
+            exc_info=True,
+            extra={"event": "health_server_error"},
+        )
+
     session = AgentSession(
         llm=openai.LLM(model="gpt-5-mini"),
         stt=deepgram.STT(model="nova-3", language="multi"),
         tts=openai.TTS(voice="alloy"),
         turn_detection=MultilingualModel(),
         vad=ctx.proc.userdata["vad"],
-        preemptive_generation=False,  # keep pre-reply RAG injection strict (assistant-role only)
+        preemptive_generation=False,  # function-tool flow; LLM entscheidet über RAG-Aufrufe
     )
 
     @session.on("agent_false_interruption")
@@ -410,6 +364,12 @@ async def entrypoint(ctx: JobContext):
         logger.info(f"Usage: {summary}")
 
     ctx.add_shutdown_callback(log_usage)
+
+    if health_server is not None:
+        async def _stop_health() -> None:
+            await stop_health_server(health_server)
+
+        ctx.add_shutdown_callback(_stop_health)
 
     await session.start(
         agent=Assistant(),
