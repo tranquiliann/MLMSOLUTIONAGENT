@@ -1,0 +1,24 @@
+ Everything’s already rebuilt and running:
+
+  - mlm-agent container: healthy and registered with LiveKit.
+  - RAG stack (redis, embedding, rag, voice-widget): healthy.
+  - RAG health endpoint: http://<your-server>:7007/api/rag/health returns {"redis":true,"tei":true,"index":"kb","indexReady":true}.
+  - Public test link: https://noiraai.com/embed?tenant=noira&agent=fibi&theme=system. Pop that open, allow microphone, and you’ll be talking to the updated agent.
+
+  If you have specific knowledge updates you want to ingest next, let me know and I can help wire those in too.
+
+▌ tell me again how i can check the logs of my agent in realtime
+
+> From MLMSOLUTIONAGENT/, run:
+
+  docker compose logs -f mlm-agent
+
+  That follows the agent container’s logs in real time; hit Ctrl+C to stop.
+
+▌ where is the right website to test agent
+
+> Use the LiveKit embed page:
+
+  - https://noiraai.com/embed?tenant=noira&agent=fibi&theme=system
+
+  Open that URL, allow the mic, and you’ll be connected to the freshly redeployed

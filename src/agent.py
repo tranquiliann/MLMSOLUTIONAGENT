@@ -348,7 +348,6 @@ async def entrypoint(ctx: JobContext):
         tts=openai.TTS(voice="alloy"),
         turn_detection=MultilingualModel(),
         vad=ctx.proc.userdata["vad"],
-        preemptive_generation=False,  # function-tool flow; LLM entscheidet über RAG-Aufrufe
     )
 
     if AgentFalseInterruptionEvent is not None:
