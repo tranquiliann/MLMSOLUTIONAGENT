@@ -12,7 +12,7 @@ from agent import Assistant
 
 
 def _llm() -> llm.LLM:
-    return openai.LLM(model="gpt-4o-mini")
+    return openai.LLM(model="gpt-5-mini")
 
 
 @pytest.mark.asyncio

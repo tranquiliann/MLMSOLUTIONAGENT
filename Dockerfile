@@ -42,13 +42,13 @@ RUN uv add "llama-index-core==0.13.5" \
 # Copy the rest of the source
 COPY . .
 
-# Pre-download multilingual turn detector assets while network access is available
-RUN uv run python scripts/download_turn_detector_assets.py
+# Skip pre-downloading turn detector assets (runtime will fetch if needed)
+# RUN uv run python scripts/download_turn_detector_assets.py
 
-ENV HF_HUB_OFFLINE=1
+ENV HF_HUB_OFFLINE=1 \
+    UV_CACHE_DIR=/tmp/uv-cache
 
-RUN chown -R appuser:appuser /app
-USER appuser
+RUN rm -rf /app/.cache /root/.cache && mkdir -p /tmp/uv-cache
 
 # Removed: 'download-files' step (no such command in your agent)
 # RUN uv run src/agent.py download-files

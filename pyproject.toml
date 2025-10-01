@@ -6,21 +6,26 @@ build-backend = "setuptools.build_meta"
 name = "agent-starter-python"
 version = "1.0.0"
 description = "Simple voice AI assistant built with LiveKit Agents for Python"
-requires-python = ">=3.9"
+requires-python = ">=3.9,<3.13"
 
 dependencies = [
     "httpx>=0.28.1",
-    "livekit-agents[cartesia,deepgram,openai,silero,turn-detector]~=1.2",
-    "livekit-plugins-deepgram>=1.2.9",
+    "livekit-agents[cartesia,deepgram,openai,silero,turn-detector]==1.1.7",
+    "livekit-plugins-deepgram>=1.1.7,<1.2",
     "livekit-plugins-noise-cancellation~=0.2",
-    "livekit-plugins-openai>=1.2.9",
-    "livekit-plugins-silero>=1.2.9",
-    "livekit-plugins-turn-detector>=1.2.9",
+    "livekit-plugins-openai>=1.1.7,<1.2",
+    "livekit-plugins-silero>=1.1.7,<1.2",
+    "livekit-plugins-turn-detector~=1.1.2",
     "huggingface_hub>=0.23,<1.0",
     "python-dotenv",
     "llama-index-core>=0.13.0,<0.14",
     "llama-index-llms-openai>=0.5.0,<0.6",
+    "llama-index-embeddings-huggingface>=0.1.0",
     "llama-index-postprocessor-flag-embedding-reranker>=0.1.2,<1.0",
+    "livekit-plugins-llama-index>=1.0.0rc9,<1.1",
+    "sentence-transformers>=2.2.0",
+    "mixedbread-ai>=2.0.0",
+    "angle-emb>=0.1.0",
     "FlagEmbedding>=1.2.0,<2.0",
     "torch>=2.2,<3.0",
 ]
