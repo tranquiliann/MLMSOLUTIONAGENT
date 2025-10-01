@@ -203,7 +203,7 @@ class RAGChatEngine:
                 "llama-index-llms-openai is unavailable; ensure compatible versions are installed."
             ) from _LLAMA_IMPORT_ERROR
 
-        model_name = chat_model or os.getenv("RAG_CHAT_MODEL", "gpt-5-mini")
+        model_name = chat_model or os.getenv("RAG_CHAT_MODEL", "gpt-4o-mini")
         model_temperature = (
             temperature
             if temperature is not None

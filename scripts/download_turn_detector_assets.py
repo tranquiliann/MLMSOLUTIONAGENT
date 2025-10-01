@@ -4,8 +4,14 @@ from pathlib import Path
 
 from huggingface_hub import hf_hub_download, snapshot_download
 
-REPO_ID = "livekit/turn-detector"
-REVISION = "v0.3.0-intl"
+from livekit.plugins.turn_detector.models import (
+    HG_MODEL,
+    MODEL_REVISIONS,
+    ONNX_FILENAME,
+)
+
+REPO_ID = HG_MODEL
+REVISION = MODEL_REVISIONS["multilingual"]
 
 # filename, kwargs passed to hf_hub_download (e.g. subfolder)
 HF_FILES = [
@@ -18,7 +24,7 @@ HF_FILES = [
     ("config.json", {}),
     ("generation_config.json", {}),
     ("added_tokens.json", {}),
-    ("model_q8.onnx", {"subfolder": "onnx"}),
+    (ONNX_FILENAME, {"subfolder": "onnx"}),
 ]
 
 

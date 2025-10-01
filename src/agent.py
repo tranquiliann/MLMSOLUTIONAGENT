@@ -8,7 +8,6 @@ from huggingface_hub import hf_hub_download
 from livekit.agents import (
     NOT_GIVEN,
     Agent,
-    AgentFalseInterruptionEvent,
     AgentSession,
     JobContext,
     JobProcess,
@@ -19,6 +18,11 @@ from livekit.agents import (
     cli,
     metrics,
 )
+
+try:  # Compatibility with older LiveKit Agents builds
+    from livekit.agents import AgentFalseInterruptionEvent  # type: ignore
+except ImportError:  # pragma: no cover - legacy versions
+    AgentFalseInterruptionEvent = None  # type: ignore
 from livekit.agents.llm import function_tool
 from livekit.plugins import cartesia, deepgram, noise_cancellation, openai, silero
 from livekit.plugins.turn_detector.models import HG_MODEL, MODEL_REVISIONS, ONNX_FILENAME
@@ -339,7 +343,7 @@ async def entrypoint(ctx: JobContext):
         )
 
     session = AgentSession(
-        llm=openai.LLM(model="gpt-5-mini"),
+        llm=openai.LLM(model="gpt-4o-mini"),
         stt=deepgram.STT(model="nova-3", language="multi"),
         tts=openai.TTS(voice="alloy"),
         turn_detection=MultilingualModel(),
@@ -347,10 +351,12 @@ async def entrypoint(ctx: JobContext):
         preemptive_generation=False,  # function-tool flow; LLM entscheidet über RAG-Aufrufe
     )
 
-    @session.on("agent_false_interruption")
-    def _on_agent_false_interruption(ev: AgentFalseInterruptionEvent):
-        logger.info("false positive interruption, resuming")
-        session.generate_reply(instructions=ev.extra_instructions or NOT_GIVEN)
+    if AgentFalseInterruptionEvent is not None:
+
+        @session.on("agent_false_interruption")
+        def _on_agent_false_interruption(ev: AgentFalseInterruptionEvent):
+            logger.info("false positive interruption, resuming")
+            session.generate_reply(instructions=ev.extra_instructions or NOT_GIVEN)
 
     usage_collector = metrics.UsageCollector()
 
