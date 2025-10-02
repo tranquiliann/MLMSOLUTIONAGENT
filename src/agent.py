@@ -33,9 +33,8 @@ from rag_client import BASE_URL, retrieve_context  # RAG retrieval via your RAG 
 from rag_chat import RAGChatEngine
 
 #
-# LlamaIndex reranker (local, no external LLM calls)
+# LlamaIndex reranker removed - not used in basic setup
 #
-from llama_index.postprocessor.flag_embedding_reranker import FlagEmbeddingReranker  # type: ignore
 
 logger = logging.getLogger("agent")
 
@@ -104,34 +103,6 @@ def ensure_turn_detector_assets() -> None:
 
 
 ensure_turn_detector_assets()
-
-#
-# -----------------------------
-# Local reranker configuration
-# -----------------------------
-#
-# Defaults are safe; override via .env.local if you want.
-RERANK_MODEL = os.getenv("RAG_RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
-RERANK_TOP_N = int(os.getenv("RAG_RERANK_TOP_N", "6"))
-RERANK_CAP   = int(os.getenv("RAG_RERANK_CAP", "24"))   # candidates to re-rank (latency control)
-RERANK_FP16  = os.getenv("RAG_RERANK_FP16", "false").lower() == "true"  # set true if you run CUDA
-
-if os.getenv("DISABLE_RERANKER", "false").lower() in {"1", "true", "yes"}:
-    logger.warning("FlagEmbedding reranker disabled via env override")
-    _flag_reranker = None
-else:
-    try:
-        _flag_reranker = FlagEmbeddingReranker(
-            model=RERANK_MODEL,
-            top_n=RERANK_TOP_N,
-            use_fp16=RERANK_FP16,
-        )
-        logger.info(
-            f"Loaded local reranker: {RERANK_MODEL} (top_n={RERANK_TOP_N}, cap={RERANK_CAP}, fp16={RERANK_FP16})"
-        )
-    except Exception as e:
-        logger.warning(f"FlagEmbeddingReranker init failed; disabling rerank. Error: {e}")
-        _flag_reranker = None
 
 # -----------------------------
 # Deutschsprachige System-Policy
@@ -211,12 +182,10 @@ async def health_check() -> dict:
 class Assistant(Agent):
     def __init__(self) -> None:
         super().__init__(instructions=BASE_POLICY)
-        rerankers = [_flag_reranker] if _flag_reranker is not None else None
-        retrieval_top_k = max(RERANK_CAP, RERANK_TOP_N)
         self._rag_engine = RAGChatEngine(
-            top_k=retrieval_top_k,
+            top_k=6,
             base_url=BASE_URL,
-            rerankers=rerankers,
+            rerankers=None,
         )
         self._current_session_id: Optional[str] = None
 
