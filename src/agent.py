@@ -4,16 +4,13 @@ import time
 from typing import Optional
 
 from dotenv import load_dotenv
-from huggingface_hub import hf_hub_download
 from livekit.agents import (
-    NOT_GIVEN,
     Agent,
     AgentSession,
     JobContext,
     JobProcess,
     MetricsCollectedEvent,
     RoomInputOptions,
-    RunContext,
     WorkerOptions,
     cli,
     metrics,
@@ -24,8 +21,7 @@ try:  # Compatibility with older LiveKit Agents builds
 except ImportError:  # pragma: no cover - legacy versions
     AgentFalseInterruptionEvent = None  # type: ignore
 from livekit.agents.llm import function_tool
-from livekit.plugins import cartesia, deepgram, noise_cancellation, openai, silero
-from livekit.plugins.turn_detector.models import HG_MODEL, MODEL_REVISIONS, ONNX_FILENAME
+from livekit.plugins import noise_cancellation, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 from health_server import start_health_server, stop_health_server
@@ -68,41 +64,6 @@ def validate_environment() -> None:
 validate_environment()
 
 
-def ensure_turn_detector_assets() -> None:
-    """Fail fast if multilingual VAD assets are missing."""
-    if os.getenv("SKIP_TURN_DETECTOR_CHECK", "false").lower() in {"1", "true", "yes"}:
-        logger.warning("Skipping turn detector asset validation due to env override")
-        return
-
-    multilingual_revision = MODEL_REVISIONS["multilingual"]
-    required_assets = [
-        ("languages.json", {}),
-        ("tokenizer.json", {}),
-        ("tokenizer_config.json", {}),
-        ("special_tokens_map.json", {}),
-        ("vocab.json", {}),
-        ("merges.txt", {}),
-        (ONNX_FILENAME, {"subfolder": "onnx"}),
-    ]
-
-    for filename, kwargs in required_assets:
-        try:
-            hf_hub_download(
-                repo_id=HG_MODEL,
-                filename=filename,
-                revision=multilingual_revision,
-                local_files_only=True,
-                **kwargs,
-            )
-        except Exception as exc:  # pragma: no cover - fail fast in production
-            location = f"{kwargs['subfolder']}/{filename}" if "subfolder" in kwargs else filename
-            raise RuntimeError(
-                "Missing multilingual turn detector asset. "
-                f"Ensure {location} is pre-downloaded for revision {multilingual_revision}."
-            ) from exc
-
-
-ensure_turn_detector_assets()
 
 # -----------------------------
 # Deutschsprachige System-Policy
@@ -189,7 +150,7 @@ class Assistant(Agent):
         )
         self._current_session_id: Optional[str] = None
 
-    def _get_session_id(self, context: RunContext) -> str:
+    def _get_session_id(self, context) -> str:
         session = getattr(context, "session", None) or getattr(self, "session", None)
         room = getattr(session, "room", None)
         if room and getattr(room, "name", None):
@@ -197,7 +158,7 @@ class Assistant(Agent):
         return "unknown_session"
 
     @function_tool
-    async def query_rag(self, context: RunContext, question: str) -> str:
+    async def query_rag(self, context, question: str) -> str:
         """Fragt das Wissensarchiv nach zusätzlichen Fakten."""
         session_id = self._get_session_id(context)
         if session_id != self._current_session_id:
@@ -246,7 +207,7 @@ class Assistant(Agent):
 
     # System-Health-Tool (intern); nie für Nutzerwissen
     @function_tool
-    async def check_system_health(self, context: RunContext):
+    async def check_system_health(self, context):
         """Check the health status of the agent system including RAG connectivity and environment configuration."""
         try:
             health_result = await health_check()
@@ -324,7 +285,7 @@ async def entrypoint(ctx: JobContext):
         @session.on("agent_false_interruption")
         def _on_agent_false_interruption(ev: AgentFalseInterruptionEvent):
             logger.info("false positive interruption, resuming")
-            session.generate_reply(instructions=ev.extra_instructions or NOT_GIVEN)
+            session.generate_reply(instructions=ev.extra_instructions or None)
 
     usage_collector = metrics.UsageCollector()
 
