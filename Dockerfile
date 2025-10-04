@@ -35,15 +35,10 @@ RUN uv sync --locked
 COPY . .
 
 # Pre-download multilingual turn detector assets into the image for offline use
-RUN uv run python scripts/download_turn_detector_assets.py
+RUN uv run python src/agent.py download-files
 
 ENV HF_HUB_OFFLINE=1 \
     UV_CACHE_DIR=/tmp/uv-cache
-
-RUN rm -rf /root/.cache && mkdir -p /tmp/uv-cache
-
-# Removed: 'download-files' step (no such command in your agent)
-# RUN uv run src/agent.py download-files
 
 # Health check for container readiness
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
