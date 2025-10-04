@@ -11,6 +11,7 @@ from livekit.agents import (
     JobProcess,
     MetricsCollectedEvent,
     RoomInputOptions,
+    RunContext,
     WorkerOptions,
     cli,
     metrics,
@@ -21,7 +22,7 @@ try:  # Compatibility with older LiveKit Agents builds
 except ImportError:  # pragma: no cover - legacy versions
     AgentFalseInterruptionEvent = None  # type: ignore
 from livekit.agents.llm import function_tool
-from livekit.plugins import noise_cancellation, silero
+from livekit.plugins import deepgram, noise_cancellation, openai, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 from health_server import start_health_server, stop_health_server
@@ -150,7 +151,7 @@ class Assistant(Agent):
         )
         self._current_session_id: Optional[str] = None
 
-    def _get_session_id(self, context) -> str:
+    def _get_session_id(self, context: RunContext) -> str:
         session = getattr(context, "session", None) or getattr(self, "session", None)
         room = getattr(session, "room", None)
         if room and getattr(room, "name", None):
@@ -158,7 +159,7 @@ class Assistant(Agent):
         return "unknown_session"
 
     @function_tool
-    async def query_rag(self, context, question: str) -> str:
+    async def query_rag(self, context: RunContext, question: str) -> str:
         """Fragt das Wissensarchiv nach zusätzlichen Fakten."""
         session_id = self._get_session_id(context)
         if session_id != self._current_session_id:
@@ -207,7 +208,7 @@ class Assistant(Agent):
 
     # System-Health-Tool (intern); nie für Nutzerwissen
     @function_tool
-    async def check_system_health(self, context):
+    async def check_system_health(self, context: RunContext):
         """Check the health status of the agent system including RAG connectivity and environment configuration."""
         try:
             health_result = await health_check()
