@@ -3,6 +3,18 @@ import os
 import time
 from typing import Optional
 
+DEFAULT_SERVICE_ENV = {
+    "LIVEKIT_URL": os.getenv("LIVEKIT_URL", "wss://your-livekit-host"),
+    "LIVEKIT_API_KEY": os.getenv("LIVEKIT_API_KEY", "YOUR_LIVEKIT_KEY"),
+    "LIVEKIT_API_SECRET": os.getenv("LIVEKIT_API_SECRET", "YOUR_LIVEKIT_SECRET"),
+    "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY", "sk-your-openai-key"),
+    "DEEPGRAM_API_KEY": os.getenv("DEEPGRAM_API_KEY", "your-deepgram-key"),
+    "RAG_BASE_URL": os.getenv("RAG_BASE_URL", "http://rag:8000"),
+}
+
+for _env_key, _env_value in DEFAULT_SERVICE_ENV.items():
+    os.environ.setdefault(_env_key, _env_value)
+
 from dotenv import load_dotenv
 from livekit.agents import (
     Agent,
@@ -36,6 +48,9 @@ from rag_chat import RAGChatEngine
 logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
+
+for _env_key, _env_value in DEFAULT_SERVICE_ENV.items():
+    os.environ.setdefault(_env_key, _env_value)
 
 
 def validate_environment() -> None:
@@ -328,4 +343,12 @@ async def entrypoint(ctx: JobContext):
 
 
 if __name__ == "__main__":
-    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm))
+    cli.run_app(
+        WorkerOptions(
+            entrypoint_fnc=entrypoint,
+            prewarm_fnc=prewarm,
+            ws_url=DEFAULT_SERVICE_ENV["LIVEKIT_URL"],
+            api_key=DEFAULT_SERVICE_ENV["LIVEKIT_API_KEY"],
+            api_secret=DEFAULT_SERVICE_ENV["LIVEKIT_API_SECRET"],
+        )
+    )

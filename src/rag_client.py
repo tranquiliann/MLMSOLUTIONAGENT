@@ -6,7 +6,7 @@ import asyncio
 from typing import Optional, Dict, Any, Tuple
 
 log = logging.getLogger("rag-client")
-BASE_URL = os.getenv("RAG_BASE_URL", "http://rag:8000")  # container-to-container
+BASE_URL = os.getenv("RAG_BASE_URL", "http://rag:8000")  # default container service
 TOP_K = int(os.getenv("RAG_TOP_K", "6"))
 MAX_RETRIES = 1
 RETRY_DELAY = float(os.getenv("RAG_RETRY_DELAY", "1.0"))
