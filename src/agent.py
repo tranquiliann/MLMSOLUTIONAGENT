@@ -21,21 +21,13 @@ from livekit.agents import (
     AgentSession,
     JobContext,
     JobProcess,
-    MetricsCollectedEvent,
-    RoomInputOptions,
-    RunContext,
     WorkerOptions,
     cli,
     metrics,
+    MetricsCollectedEvent,
 )
-
-try:  # Compatibility with older LiveKit Agents builds
-    from livekit.agents import AgentFalseInterruptionEvent  # type: ignore
-except ImportError:  # pragma: no cover - legacy versions
-    AgentFalseInterruptionEvent = None  # type: ignore
 from livekit.agents.llm import function_tool
-from livekit.plugins import deepgram, noise_cancellation, openai, silero
-from livekit.plugins.turn_detector.multilingual import MultilingualModel
+from livekit.plugins import google
 
 from health_server import start_health_server, stop_health_server
 from rag_client import BASE_URL, retrieve_context  # RAG retrieval via your RAG service
@@ -158,7 +150,9 @@ async def health_check() -> dict:
 
 class Assistant(Agent):
     def __init__(self) -> None:
-        super().__init__(instructions=BASE_POLICY)
+        super().__init__(
+            instructions=BASE_POLICY,
+        )
         self._rag_engine = RAGChatEngine(
             top_k=6,
             base_url=BASE_URL,
@@ -166,17 +160,10 @@ class Assistant(Agent):
         )
         self._current_session_id: Optional[str] = None
 
-    def _get_session_id(self, context: RunContext) -> str:
-        session = getattr(context, "session", None) or getattr(self, "session", None)
-        room = getattr(session, "room", None)
-        if room and getattr(room, "name", None):
-            return room.name
-        return "unknown_session"
-
     @function_tool
-    async def query_rag(self, context: RunContext, question: str) -> str:
+    async def query_rag(self, question: str) -> str:
         """Fragt das Wissensarchiv nach zusätzlichen Fakten."""
-        session_id = self._get_session_id(context)
+        session_id = "agent_session"
         if session_id != self._current_session_id:
             logger.debug("Starting new RAG conversation for session %s", session_id)
             self._rag_engine.reset()
@@ -223,7 +210,7 @@ class Assistant(Agent):
 
     # System-Health-Tool (intern); nie für Nutzerwissen
     @function_tool
-    async def check_system_health(self, context: RunContext):
+    async def check_system_health(self):
         """Check the health status of the agent system including RAG connectivity and environment configuration."""
         try:
             health_result = await health_check()
@@ -250,9 +237,6 @@ class Assistant(Agent):
             logger.error(f"Health check tool failed: {e}")
             return f"Health check failed: {str(e)}"
 
-
-def prewarm(proc: JobProcess):
-    proc.userdata["vad"] = silero.VAD.load()
 
 
 async def entrypoint(ctx: JobContext):
@@ -288,20 +272,17 @@ async def entrypoint(ctx: JobContext):
             extra={"event": "health_server_error"},
         )
 
+    await ctx.connect()
+
     session = AgentSession(
-        llm=openai.LLM(model="gpt-4o-mini"),
-        stt=deepgram.STT(model="nova-3", language="multi"),
-        tts=openai.TTS(voice="alloy"),
-        turn_detection=MultilingualModel(),
-        vad=ctx.proc.userdata["vad"],
+        llm=google.realtime.RealtimeModel(
+            model="models/gemini-2.5-flash",
+            instructions=BASE_POLICY,
+            voice="Aoede"
+        ),
     )
 
-    if AgentFalseInterruptionEvent is not None:
-
-        @session.on("agent_false_interruption")
-        def _on_agent_false_interruption(ev: AgentFalseInterruptionEvent):
-            logger.info("false positive interruption, resuming")
-            session.generate_reply(instructions=ev.extra_instructions or None)
+    agent = Assistant()
 
     usage_collector = metrics.UsageCollector()
 
@@ -323,30 +304,24 @@ async def entrypoint(ctx: JobContext):
         ctx.add_shutdown_callback(_stop_health)
 
     await session.start(
-        agent=Assistant(),
+        agent=agent,
         room=ctx.room,
-        room_input_options=RoomInputOptions(
-            noise_cancellation=noise_cancellation.BVC(),
-        ),
     )
 
-    await ctx.connect()
-
     # Erste Antwort: nur Startinstruktion auf Deutsch; BASE_POLICY ist bereits gesetzt.
-    session.generate_reply(
+    # We await generate_reply since session handles output natively
+    await session.generate_reply(
         instructions=(
             "Starte das Gespräch jetzt mit einer freundlichen Begrüßung. Stelle dich genau einmal "
             "als Fibi vor, erinnere kurz an die drei Schritte (Registrieren, Aktivieren, Teilen) "
             "und frage anschließend, wobei du helfen kannst."
-        ),
+        )
     )
-
 
 if __name__ == "__main__":
     cli.run_app(
         WorkerOptions(
             entrypoint_fnc=entrypoint,
-            prewarm_fnc=prewarm,
             ws_url=DEFAULT_SERVICE_ENV["LIVEKIT_URL"],
             api_key=DEFAULT_SERVICE_ENV["LIVEKIT_API_KEY"],
             api_secret=DEFAULT_SERVICE_ENV["LIVEKIT_API_SECRET"],

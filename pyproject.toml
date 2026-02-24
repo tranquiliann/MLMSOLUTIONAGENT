@@ -9,15 +9,8 @@ description = "Simple voice AI assistant built with LiveKit Agents for Python"
 requires-python = ">=3.9,<3.13"
 
 dependencies = [
-    "livekit-agents[openai,cartesia,elevenlabs,deepgram,silero,turn-detector,mcp]~=1.1.2",
-    "livekit-plugins-openai~=1.1.2",
-    "livekit-plugins-silero~=1.1.2",
-    "livekit-plugins-turn-detector~=1.1.2",
-    "livekit-plugins-deepgram~=1.1.2",
-    "livekit-plugins-noise-cancellation~=0.2",
-    "livekit-plugins-llama-index>=1.0.0rc9,<1.1",
-    "openai==1.93.*",
-    "deepgram-sdk~=3.3",
+    "livekit-agents[google,mcp]>=1.1.2",
+    "livekit-plugins-google>=0.1.0",
     "sentence-transformers>=2.2.0",
     "numpy>=1.21.0",
     "llama-index>=0.10.46",
@@ -79,3 +72,7 @@ ignore = ["E501"]  # Line too long (handled by formatter)
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.uv]
+prerelease = "allow"
+required-environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'", "sys_platform == 'linux' and platform_machine == 'x86_64'"]
