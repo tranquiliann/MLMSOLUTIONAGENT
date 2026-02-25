@@ -20,13 +20,13 @@ from livekit.agents import (
     Agent,
     AgentSession,
     JobContext,
-    JobProcess,
+    RunContext,
     WorkerOptions,
     cli,
     metrics,
     MetricsCollectedEvent,
+    function_tool,
 )
-from livekit.agents.llm import function_tool
 from livekit.plugins import google
 
 from health_server import start_health_server, stop_health_server
@@ -160,8 +160,8 @@ class Assistant(Agent):
         )
         self._current_session_id: Optional[str] = None
 
-    @function_tool
-    async def query_rag(self, question: str) -> str:
+    @function_tool()
+    async def query_rag(self, context: RunContext, question: str) -> str:
         """Fragt das Wissensarchiv nach zusätzlichen Fakten."""
         session_id = "agent_session"
         if session_id != self._current_session_id:
@@ -209,8 +209,8 @@ class Assistant(Agent):
             return "Entschuldigung, ich konnte dazu gerade keine Wissensbasis finden."
 
     # System-Health-Tool (intern); nie für Nutzerwissen
-    @function_tool
-    async def check_system_health(self):
+    @function_tool()
+    async def check_system_health(self, context: RunContext):
         """Check the health status of the agent system including RAG connectivity and environment configuration."""
         try:
             health_result = await health_check()
